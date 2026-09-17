@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: cloud-data-pipeline-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        sync: false   # set this in the Render dashboard; never commit the secret
