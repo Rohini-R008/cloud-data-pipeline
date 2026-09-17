@@ -1,0 +1,12 @@
+# Each source lands untouched in the landing zone.
+# type: "local" reads from seeds/  |  type: "url" downloads over HTTP.
+sources:
+  - name: population
+    type: local
+    location: source_a_population.csv
+    filename: population.csv
+
+  - name: regions
+    type: local
+    location: source_b_regions.csv
+    filename: regions.csv
