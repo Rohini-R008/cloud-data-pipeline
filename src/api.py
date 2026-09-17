@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from psycopg2.extras import RealDictCursor
-
+from fastapi.responses import RedirectResponse
 from src import db
 
 app = FastAPI(title="Cloud Data Pipeline API", version="1.0")
@@ -15,6 +15,9 @@ def query(sql, params=None):
     finally:
         conn.close()
 
+@app.get("/")
+def root():
+    return RedirectResponse(url="/docs")
 
 @app.get("/health")
 def health():
