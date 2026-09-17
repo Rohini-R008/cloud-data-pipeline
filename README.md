@@ -66,13 +66,14 @@ uvicorn src.api:app # http://127.0.0.1:8000/docs
 ## Metrics
 Measured from the `pipeline_runs` log (queries in `docs/metrics.sql`):
 - **Rows per run:** 17 loaded
-- **Validation failure rate:** 10.5%
-- **Freshness lag:** under 00:26:11.060663 hours (time since last successful run)
+- **Validation failure rate:** 10.5% of all processed rows (22% of the population source)
+- **Freshness lag:** ~26 minutes (time since last successful run)
 - **Success rate:** 100.0% of runs succeeded
 
 ## Broken-input demo
-Feeding a deliberately broken file routes bad rows to quarantine while clean rows
-still load — see `demo.mp4`. This is the core reliability guarantee of the pipeline.
+Feeding a deliberately broken file routes bad rows to quarantine while clean rows still load — the core reliability guarantee of the pipeline.
+
+   **[▶ Watch the broken-input demo](https://youtu.be/4Akrd9Q1COY)**
 
 ## Run in the cloud
 The GitHub Action (`.github/workflows/pipeline.yml`) runs the pipeline daily and
