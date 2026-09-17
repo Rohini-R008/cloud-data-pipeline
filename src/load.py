@@ -29,33 +29,46 @@ def validate(rows, model):
     return valid, bad
 
 
-def main():
-    run_id, run_dir = latest_run_dir()
-    print(f"[load] using landing run: {run_id}")
-
+def run_load(conn, run_dir, run_id):
+    """Clean -> validate -> load, using an existing DB connection.
+    Returns a metrics dict the orchestrator logs."""
     pop_rows = clean_population(run_dir / "population.csv")
     reg_rows = clean_regions(run_dir / "regions.csv")
 
     pop_valid, pop_bad = validate(pop_rows, PopulationRecord)
     reg_valid, reg_bad = validate(reg_rows, RegionRecord)
 
-    conn = db.get_conn()
+    db.init_db(conn)
+    db.truncate_all(conn)
+    db.insert_population(conn, pop_valid, run_id)
+    db.insert_regions(conn, reg_valid, run_id)
+    db.insert_quarantine(conn, pop_bad, "population", run_id)
+    db.insert_quarantine(conn, reg_bad, "regions", run_id)
+    reconciled = db.build_reconciled(conn)
+
+    return {
+        "rows_loaded": len(pop_valid) + len(reg_valid),
+        "rows_quarantined": len(pop_bad) + len(reg_bad),
+        "reconciled_rows": reconciled,
+        "pop_loaded": len(pop_valid), "pop_quarantined": len(pop_bad),
+        "reg_loaded": len(reg_valid), "reg_quarantined": len(reg_bad),
+    }
+
+
+def main():
+    run_id, run_dir = latest_run_dir()
+    print(f"[load] using landing run: {run_id}")
+    conn = db.connect_with_retries()
     try:
-        db.init_db(conn)
-        db.truncate_all(conn)
-        db.insert_population(conn, pop_valid, run_id)
-        db.insert_regions(conn, reg_valid, run_id)
-        db.insert_quarantine(conn, pop_bad, "population", run_id)
-        db.insert_quarantine(conn, reg_bad, "regions", run_id)
-        reconciled = db.build_reconciled(conn)
+        m = run_load(conn, run_dir, run_id)
     finally:
         conn.close()
 
     print("\n=== Load summary ===")
     print(f"run_id       : {run_id}")
-    print(f"population   : {len(pop_valid):>3} loaded, {len(pop_bad):>3} quarantined")
-    print(f"regions      : {len(reg_valid):>3} loaded, {len(reg_bad):>3} quarantined")
-    print(f"reconciled   : {reconciled:>3} rows (population joined to regions)")
+    print(f"population   : {m['pop_loaded']:>3} loaded, {m['pop_quarantined']:>3} quarantined")
+    print(f"regions      : {m['reg_loaded']:>3} loaded, {m['reg_quarantined']:>3} quarantined")
+    print(f"reconciled   : {m['reconciled_rows']:>3} rows")
 
 
 if __name__ == "__main__":

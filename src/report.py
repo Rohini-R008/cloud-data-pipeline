@@ -2,7 +2,7 @@ from src import db
 
 
 def main():
-    conn = db.get_conn()
+    conn = db.connect_with_retries()
     try:
         with conn.cursor() as cur:
             print("=== Table counts ===")
@@ -21,6 +21,20 @@ def main():
             )
             for source, reason, raw in cur.fetchall():
                 print(f"[{source}] {reason}  ::  {raw}")
+
+            print("\n=== Recent pipeline runs (up to 5) ===")
+            try:
+                cur.execute(
+                    "SELECT run_id, status, rows_loaded, rows_quarantined, "
+                    "round(duration_seconds::numeric, 1) AS secs, started_at "
+                    "FROM pipeline_runs ORDER BY started_at DESC LIMIT 5;"
+                )
+                for run_id, status, loaded, quar, secs, started in cur.fetchall():
+                    print(f"{started}  {status:8s}  loaded={loaded} "
+                          f"quar={quar}  {secs}s  ({run_id})")
+            except Exception:
+                conn.rollback()
+                print("(no pipeline_runs yet — run: python -m src.pipeline)")
     finally:
         conn.close()
 

@@ -1,6 +1,8 @@
 import json
+import time
 
 import psycopg2
+from psycopg2 import OperationalError
 from psycopg2.extras import execute_values
 
 from src.config import DATABASE_URL
@@ -32,6 +34,19 @@ CREATE TABLE IF NOT EXISTS quarantine (
     error_reason   TEXT  NOT NULL,
     quarantined_at TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id               SERIAL PRIMARY KEY,
+    run_id           TEXT NOT NULL,
+    started_at       TIMESTAMPTZ NOT NULL,
+    finished_at      TIMESTAMPTZ,
+    duration_seconds DOUBLE PRECISION,
+    status           TEXT NOT NULL,
+    rows_loaded      INT,
+    rows_quarantined INT,
+    reconciled_rows  INT,
+    error            TEXT
+);
 """
 
 
@@ -44,6 +59,22 @@ def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
 
+def connect_with_retries(attempts=5, base_delay=2.0):
+    """Neon scales to zero when idle; the first connect can fail or be slow.
+    Retry with exponential backoff so a cold start doesn't fail the run."""
+    last = None
+    for i in range(1, attempts + 1):
+        try:
+            return get_conn()
+        except OperationalError as e:
+            last = e
+            wait = base_delay * (2 ** (i - 1))
+            print(f"[db] connect attempt {i}/{attempts} failed: {e} "
+                  f"-> retrying in {wait:.0f}s")
+            time.sleep(wait)
+    raise SystemExit(f"[db] could not connect after {attempts} attempts: {last}")
+
+
 def init_db(conn):
     with conn.cursor() as cur:
         cur.execute(DDL)
@@ -51,7 +82,7 @@ def init_db(conn):
 
 
 def truncate_all(conn):
-    # Idempotent loads: each run starts from a clean slate (no side effects).
+    # Main tables reset each run; pipeline_runs is history and is NOT truncated.
     with conn.cursor() as cur:
         cur.execute("TRUNCATE population, regions, quarantine RESTART IDENTITY;")
     conn.commit()
@@ -86,9 +117,7 @@ def insert_regions(conn, rows, run_id):
 def insert_quarantine(conn, items, source, run_id):
     if not items:
         return
-    values = [
-        (source, run_id, json.dumps(it["raw"]), it["error"]) for it in items
-    ]
+    values = [(source, run_id, json.dumps(it["raw"]), it["error"]) for it in items]
     with conn.cursor() as cur:
         execute_values(
             cur,
@@ -100,7 +129,6 @@ def insert_quarantine(conn, items, source, run_id):
 
 
 def build_reconciled(conn):
-    # The reconciliation payoff: join the two cleaned sources on canonical country.
     with conn.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS country_reconciled;")
         cur.execute("""
@@ -113,3 +141,18 @@ def build_reconciled(conn):
         n = cur.fetchone()[0]
     conn.commit()
     return n
+
+
+def log_run(conn, run_id, started_at, finished_at, status,
+            rows_loaded, rows_quarantined, reconciled_rows, error=None):
+    duration = (finished_at - started_at).total_seconds()
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO pipeline_runs
+                 (run_id, started_at, finished_at, duration_seconds, status,
+                  rows_loaded, rows_quarantined, reconciled_rows, error)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (run_id, started_at, finished_at, duration, status,
+             rows_loaded, rows_quarantined, reconciled_rows, error),
+        )
+    conn.commit()
